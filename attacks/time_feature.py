@@ -29,7 +29,7 @@ from transformers import AutoTokenizer, PretrainedConfig
 
 logger = get_logger(__name__)
 
-
+torch_dtype = None
 class DreamBoothDatasetFromTensor(Dataset):
     """Just like DreamBoothDataset, but take instance_images_tensor instead of path"""
 
@@ -398,10 +398,12 @@ def train_one_epoch(
     vae,
     data_tensor: torch.Tensor,
     num_steps=20,
+    weight_dtype=torch.float16,
 ):
     # Load the tokenizer
 
     unet, text_encoder = copy.deepcopy(models[0]), copy.deepcopy(models[1])
+
     params_to_optimize = itertools.chain(unet.parameters(), text_encoder.parameters())
 
     optimizer = torch.optim.AdamW(
@@ -422,7 +424,6 @@ def train_one_epoch(
         args.center_crop,
     )
 
-    weight_dtype = torch.bfloat16
     device = torch.device("cuda")
 
     vae.to(device, dtype=weight_dtype)
@@ -491,7 +492,6 @@ def train_one_epoch(
         print(
             f"Step #{step}, loss: {loss.detach().item()}, prior_loss: {prior_loss.detach().item()}, instance_loss: {instance_loss.detach().item()}"
         )
-
     return [unet, text_encoder]
 
 def set_unet_attr(unet):
@@ -629,14 +629,13 @@ def pgd_attack(
     original_images: torch.Tensor,
     target_tensor: torch.Tensor,
     num_steps: int,
-    time_list
+    time_list,
+    weight_dtype=torch.float16,
 ):
     """Return new perturbed data"""
 
     unet, text_encoder = models
-    weight_dtype = torch.bfloat16
     device = torch.device("cuda")
-
     vae.to(device, dtype=weight_dtype)
     text_encoder.to(device, dtype=weight_dtype)
     unet.to(device, dtype=weight_dtype)
@@ -700,11 +699,11 @@ def pgd_attack(
         loss = loss + target_loss.detach().item()
         loss.backward()
         alpha = args.pgd_alpha
-        eps = args.pgd_eps / 255
+        eps = args.pgd_eps / 255 * 2
+        # print(f"max: {perturbed_images.max().item()},min: {perturbed_images.min().item()},eps: {eps}")
         adv_images = perturbed_images + alpha * perturbed_images.grad.sign()
         eta = torch.clamp(adv_images - original_images, min=-eps, max=+eps)
         perturbed_images = torch.clamp(original_images + eta, min=-1, max=+1).detach_()
-        print(f"PGD loss - step {step}, loss: {loss.detach().item()}, target_loss : {target_loss.detach().item()}")
     return perturbed_images
 
 def select_timestep(
@@ -716,11 +715,15 @@ def select_timestep(
     data_tensor: torch.Tensor,
     original_images: torch.Tensor,
     target_tensor: torch.Tensor,
+    weight_dtype=torch.float16,
     ):
     """Return new perturbed data"""
 
     unet, text_encoder = models
-    weight_dtype = torch.bfloat16
+    # vkeilo change it to weight_dtype
+
+    print(f"select_timestep weight_dtype:{weight_dtype}")
+
     device = torch.device("cuda")
 
     vae.to(device, dtype=weight_dtype)
@@ -866,7 +869,7 @@ def main(args):
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
-        logging_dir=logging_dir,
+        # logging_dir=logging_dir,
     )
 
     logging.basicConfig(
@@ -887,6 +890,13 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed)
     setup_seeds()
+    torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
+    if args.mixed_precision == "fp32":
+        torch_dtype = torch.float32
+    elif args.mixed_precision == "fp16":
+        torch_dtype = torch.float16
+    elif args.mixed_precision == "bf16":
+        torch_dtype = torch.bfloat16
     # Generate class images if prior preservation is enabled.
     if args.with_prior_preservation:
         class_images_dir = Path(args.class_data_dir)
@@ -895,13 +905,6 @@ def main(args):
         cur_class_images = len(list(class_images_dir.iterdir()))
 
         if cur_class_images < args.num_class_images:
-            torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
-            if args.mixed_precision == "fp32":
-                torch_dtype = torch.float32
-            elif args.mixed_precision == "fp16":
-                torch_dtype = torch.float16
-            elif args.mixed_precision == "bf16":
-                torch_dtype = torch.bfloat16
             pipeline = DiffusionPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
                 torch_dtype=torch_dtype,
@@ -999,7 +1002,8 @@ def main(args):
 
         target_image_tensor = torch.from_numpy(target_image).to("cuda", dtype=torch.float32) / 127.5 - 1.0
         target_latent_tensor = (
-            vae.encode(target_image_tensor).latent_dist.sample().to(dtype=torch.bfloat16) * vae.config.scaling_factor
+            # vkeilo change bfloat16 to mixed_precision
+            vae.encode(target_image_tensor).latent_dist.sample().to(dtype=torch_dtype) * vae.config.scaling_factor
         )
         target_latent_tensor = target_latent_tensor.repeat(len(perturbed_data), 1, 1, 1).cuda()
 
@@ -1014,12 +1018,16 @@ def main(args):
                 perturbed_data,
                 original_data,
                 target_latent_tensor,
+                weight_dtype=torch_dtype,
     )
     for t in time_list:
         print(t)
+    device = torch.device("cuda")
     for i in range(args.max_train_steps):
         # 1. f' = f.clone()
         f_sur = copy.deepcopy(f)
+        f_sur[0].to(device=device)
+        f_sur[1].to(device=device)
         f_sur = train_one_epoch(
             args,
             f_sur,
@@ -1028,6 +1036,7 @@ def main(args):
             vae,
             clean_data,
             args.max_f_train_steps,
+            weight_dtype=torch_dtype,
         )
         perturbed_data = pgd_attack(
             args,
@@ -1039,8 +1048,13 @@ def main(args):
             original_data,
             target_latent_tensor,
             args.max_adv_train_steps,
-            time_list
+            time_list,
+            weight_dtype=torch_dtype,
         )
+        f_sur[0].to(device="cpu")
+        f_sur[1].to(device="cpu")
+        f[0].to(device=device)
+        f[1].to(device=device)
         f = train_one_epoch(
             args,
             f,
@@ -1049,8 +1063,10 @@ def main(args):
             vae,
             perturbed_data,
             args.max_f_train_steps,
+            weight_dtype=torch_dtype,
         )
-
+        f[0].to(device="cpu")
+        f[1].to(device="cpu")
         if (i + 1) % args.checkpointing_iterations == 0:
             save_folder = f"{args.output_dir}/noise-ckpt/{i+1}"
             os.makedirs(save_folder, exist_ok=True)
@@ -1070,3 +1086,4 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     main(args)
+    print("exp finished")

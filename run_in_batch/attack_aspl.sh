@@ -1,25 +1,24 @@
-export EXPERIMENT_NAME=103
 export MODEL_PATH="/root/xinglin-data/github/Anti-DreamBooth/stable-diffusion/stable-diffusion-2-1-base"
+export EXPERIMENT_NAME=103
 export CLEAN_TRAIN_DIR="data/CelebA-HQ/$EXPERIMENT_NAME/set_A" 
 export CLEAN_ADV_DIR="data/CelebA-HQ/$EXPERIMENT_NAME/set_B"
-export OUTPUT_DIR="outputs/simac/CelebA-HQ/$EXPERIMENT_NAME"
+export OUTPUT_DIR="outputs/anti-dreambooth/CelebA-HQ/$EXPERIMENT_NAME"
 export CLASS_DIR="data/class-person"
-
 
 # ------------------------- Train ASPL on set B -------------------------
 mkdir -p $OUTPUT_DIR
 cp -r $CLEAN_TRAIN_DIR $OUTPUT_DIR/image_clean
 cp -r $CLEAN_ADV_DIR $OUTPUT_DIR/image_before_addding_noise
     
-accelerate launch attacks/time_feature.py \
+accelerate launch attacks/aspl.py \
   --pretrained_model_name_or_path=$MODEL_PATH  \
   --enable_xformers_memory_efficient_attention \
   --instance_data_dir_for_train=$CLEAN_TRAIN_DIR \
   --instance_data_dir_for_adversarial=$CLEAN_ADV_DIR \
-  --instance_prompt="a photo of sks person" \
+  --instance_prompt=$instance_prompt \
   --class_data_dir=$CLASS_DIR \
   --num_class_images=200 \
-  --class_prompt="a photo of person" \
+  --class_prompt=$class_prompt \
   --output_dir=$OUTPUT_DIR \
   --center_crop \
   --with_prior_preservation \
@@ -37,7 +36,7 @@ accelerate launch attacks/time_feature.py \
   --seed=0
 
 export INSTANCE_DIR="$OUTPUT_DIR/noise-ckpt/50"
-export DREAMBOOTH_OUTPUT_DIR="dreambooth-outputs/simac/CelebA-HQ/$EXPERIMENT_NAME"
+export DREAMBOOTH_OUTPUT_DIR="dreambooth-outputs/anti-dreambooth/CelebA-HQ/$EXPERIMENT_NAME"
 
 accelerate launch train_dreambooth.py \
   --pretrained_model_name_or_path=$MODEL_PATH  \
@@ -69,5 +68,4 @@ accelerate launch train_dreambooth.py \
 python infer.py \
   --model_path $DREAMBOOTH_OUTPUT_DIR/checkpoint-1000 \
   --output_dir $DREAMBOOTH_OUTPUT_DIR/checkpoint-1000-test-infer
-
 
