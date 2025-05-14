@@ -3,6 +3,7 @@ export EXPERIMENT_NAME="SimAC"
 export MODEL_PATH=$model_path
 export CLEAN_TRAIN_DIR="$data_path/$dataset_name/$data_id/set_A" 
 export CLEAN_ADV_DIR="$data_path/$dataset_name/$data_id/set_B"
+export CLEAN_REF="$data_path/$dataset_name/$data_id/set_C"
 # export OUTPUT_DIR="outputs/simac/$dataset_name/$EXPERIMENT_NAME"
 export OUTPUT_DIR="outputs/$EXPERIMENT_NAME/$wandb_run_name"
 export CLASS_DIR=$class_dir
@@ -11,7 +12,7 @@ export CLASS_DIR=$class_dir
 # ------------------------- Train ASPL on set B -------------------------
 mkdir -p $OUTPUT_DIR
 rm -r $OUTPUT_DIR/* 2>/dev/null || true
-cp -r $CLEAN_TRAIN_DIR $OUTPUT_DIR/image_clean_ref
+cp -r $CLEAN_REF $OUTPUT_DIR/image_clean_ref
 cp -r $CLEAN_ADV_DIR $OUTPUT_DIR/image_before_addding_noise
 
 simac_cmd="""accelerate launch attacks/time_feature.py \

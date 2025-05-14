@@ -58,20 +58,23 @@ def generate_lin_interval_list(start, end, num):
     return np.linspace(start, end, num=num).tolist()
 
 
-test_lable = "SimAC_VGGFace2_random50_r4p8p12p16_test"
+test_lable = "SimAC_SD21_Wikiart_random50_r4p8p12p16"
 params_options = {
     "data_path": [f"{proj_abs_path}/datasets"],
-    "dataset_name":["VGGFace2-clean"],
-    # "data_id":[i for i in range(50)],
-    "data_id":[0],
+    "dataset_name":["wikiart-data"],
+    "data_id":[i for i in range(50)],
+    # "data_id":[0],
     # "data_id":[0,1],
-    "r": [16],
-    "attack_steps": [5],
+    "r": [4,8,12,16],
+    "attack_steps": [50],
     "mixed_precision":['bf16'],
-    "model_path":['/data/home/yekai/github/MetaCloak/SD/stable-diffusion-2-1-base'],
-    "class_data_dir":['/data/home/yekai/github/DiffAdvPerturbationBench/datasets/class-person'],
-    "instance_prompt":["a photo of sks person"],
-    "class_prompt":["a photo of a person"],
+    "model_path":['/data/home/yekai/github/MetaCloak-local/SD/stable-diffusion-2-1-base'],
+    # person/artwork
+    "class_data_dir":['/data/home/yekai/github/DiffAdvPerturbationBench/datasets/class-artwork'],
+    # "instance_prompt":["a photo of sks person"],
+    # "class_prompt":["a photo of a person"],
+    "instance_prompt":["a painting of sks artwork"],
+    "class_prompt":["a painting of artwork"],
     "report_to":['wandb'],
     # sys env set
     "WANDB_MODE":["offline"],
